@@ -1,0 +1,41 @@
+# 1.   [Anyone with local PowerShell access] Create self-signed certificate for use with PnP PowerShell in Azure Automation
+# PowerShell code to create a self-signed certificate:
+$cert = New-SelfSignedCertificate -DnsName "{DNS_NAME}" -CertStoreLocation "Cert:\CurrentUser\My" -NotAfter (Get-Date).AddYears(10) -KeyLength 2048
+Export-Certificate -Cert $cert -FilePath "C:\temp\{YOUR_CERT_NAME}.cer"
+Export-PfxCertificate -Cert $cert -FilePath "C:\temp\{YOUR_CERT_NAME}.pfx" -Password (ConvertTo-SecureString -String "{YOUR_PASSWORD}" -AsPlainText -Force)
+
+# 2.   [Global Admin] Create app registration in Azure AD
+# 3.   [Global Admin] Create a client secret for the app registration for use with Dataverse API
+# 4.   [Global Admin] Upload the self-signed certificate .cer file to the app registration in Azure AD
+# 5.   [Global Admin] Assign "Application" Sites.Selected permissions to the app registration for SharePoint (use the SharePoint API, not Graph API, for this step).
+# 5a.  [Global Admin] Grant admin consent for the Sites.Selected permission in the app registration.
+
+# 6.   [Environment System Admin/Power Platform Admin/Global Admin] Create app user in Dataverse environment and assign security role to allow reading of files from required Dataverse table(s). https://learn.microsoft.com/en-us/power-platform/admin/manage-application-users?tabs=new#create-an-application-user
+
+# 7.   [Global Admin] Use Graph API/explorer to retrieve Graph Site ID of SharePoint site to create Sites.Selected permission for the app registration.
+GET https://graph.microsoft.com/v1.0/sites?search={SITE_NAME}
+# 8.   [Global Admin] Use Graph API/explorer to assign permissions to the app registration for SharePoint site.
+POST https://graph.microsoft.com/v1.0/sites/{SITE_ID}/permissions
+{ 
+ "roles": ["write"],
+ "grantedToIdentities": [{
+    "application": {
+      "id": "{APP_REGISTRATION_ID}", 
+      "displayName": "{APP_REGISTRATION_NAME}" 
+    }
+  }]
+}
+
+# 9.   [Global/Azure Admin] Create an Azure Automation account.
+# 10.  [Global/Azure Admin] Assign the development team "Owner", "Contributor" role to the Azure Automation account (or similar role to give permission to create, edit, and run runbooks and credentials).
+
+# 10.  [Dev Team] Create custom runtime environment in Azure Automation for PnP PowerShell. Use PowerShell version 7.4
+# 10a. [Dev Team] Upload the pnp.powershell.zip module file to the custom runtime environment created in step 10 using the "Add a file" option in the Azure portal.
+# 11.  [Dev Team] Create Runbook using the script that Jake has provided. 
+# 12.  [Dev Team] Assign the Runbook to the custom runtime environment created in step 10.
+# 13.  [Dev Team] Upload the self-signed certificate .pfx file into Azure Automation account.
+# 14.  [Dev Team] Create a set of credentials in Azure Automation using the Client ID and Client Secret from the app registration created in step 2. Name the credential "AppRegistration".
+# 15.  [Dev Team] Update the Runbook with the correct parameters for your environment, including: DataverseTableName, DataverseFileColumnName, DataverseUrl, SharePointSiteUrl, SharePointDocLibName, TenantId, and CertificateThumbprint.
+# 16.  [Dev Team] Publish the Runbook in Azure Automation.
+
+# 17.  [Dev Team] Using a Power Automate flow, use the "Create Job" action to trigger the Azure Automation Runbook. Pass the required parameters to the Runbook: FileName and DataverseRowId. All other parameters can be removed from the flow if you've configured them in the Runbook script already.

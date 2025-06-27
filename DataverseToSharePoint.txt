@@ -1,0 +1,105 @@
+param (
+    [Parameter(Mandatory = $true)]
+    [string]$DataverseRowId = "3df13404-7a53-f011-877a-002248222778",
+
+    [Parameter(Mandatory = $true)]
+    [string]$FileName = "FileName.pdf",
+
+    [Parameter(Mandatory = $false)]
+    [string]$DataverseTableName = "cr85b_jakecustomtables",
+
+    [Parameter(Mandatory = $false)]
+    [string]$DataverseFileColumnName = "cr85b_filecolumn1",
+
+    [Parameter(Mandatory = $false)]
+    [string]$DataverseUrl = "https://org660f944a.crm.dynamics.com/",
+
+    [Parameter(Mandatory = $false)]
+    [string]$SharePointSiteUrl = "https://jakegwynndemo.sharepoint.com/sites/AllowList-Automation",
+
+    [Parameter(Mandatory = $false)]
+    [string]$SharePointDocLibName = "DocLibTest",
+
+    [Parameter(Mandatory = $false)]
+    [string]$TenantId = "04b9e073-f7cf-4c95-9f91-e6d55d5a3797",
+
+    [Parameter(Mandatory = $false)]
+    [string]$CertificateThumbprint = "A507B2A63E3C0D962667678578C8F1B573B03288"
+)
+
+# Provide details about parameters that were passed to the script
+Write-Output "Dataverse Table Name:               $DataverseTableName"
+Write-Output "Dataverse File Column Name:         $DataverseFileColumnName"
+Write-Output "Dataverse Row ID:                   $DataverseRowId"
+Write-Output "Dataverse URL:                      $DataverseUrl"
+Write-Output "SharePoint Site URL:                $SharePointSiteUrl"
+Write-Output "SharePoint Document Library Name:   $SharePointDocLibName"
+Write-Output "File Name:                          $FileName"
+Write-Output "Tenant ID:                          $TenantId"
+
+Write-Host "`r`n"
+Write-Host "Importing PnP.PowerShell module..."
+Import-Module "pnp.powershell"
+
+# Retrieve Azure Automation Crednetials named "AppRegistration"
+$AppRegistrationCredentials = Get-AutomationPSCredential -Name "AppRegistration"
+if (-not $AppRegistrationCredentials) {
+    Write-Output "Failed to retrieve credentials. Ensure the credential 'AppRegistration' exists in Azure Automation."
+    exit
+}
+
+# Set ClientId and ClientSecret variables for Dataverse Authentication
+$ClientId = $AppRegistrationCredentials.UserName
+$ClientSecret = $AppRegistrationCredentials.GetNetworkCredential().Password
+
+# Get OAuth 2.0 Token for Dataverse Authentication
+$TokenUrl = "https://login.microsoftonline.com/$TenantId/oauth2/v2.0/token"
+$Body = @{
+    grant_type    = "client_credentials"
+    client_id     = $ClientId
+    client_secret = $ClientSecret
+    scope         = "$DataverseUrl/.default"
+}
+
+try {
+    Write-Output "Retrieving access token for Dataverse..."
+    $TokenResponse = Invoke-RestMethod -Method Post -Uri $TokenUrl -Body $Body -ContentType "application/x-www-form-urlencoded"
+    $AccessToken = $TokenResponse.access_token
+} catch {
+    Write-Output "Failed to retrieve access token for Dataverse"
+    exit
+}
+
+try {
+    Write-Output "Connecting to SharePoint using Connect-PnPOnline ..."
+    Connect-PnPOnline -Url $SharePointSiteUrl -ClientId $ClientId -Thumbprint $CertificateThumbprint -Tenant $TenantId  -ErrorAction Stop
+} catch {
+    Write-Output "Failed to connect to SharePoint Online using Connect-PnPOnline"
+    exit
+}
+
+$Headers = @{
+    Authorization = "Bearer $AccessToken"
+}
+
+$FileUrl = "$DataverseUrl/api/data/v9.2/$DataverseTableName($DataverseRowId)/$DataverseFileColumnName/`$value"
+
+try {
+    Write-Output "Retrieving Dataverse file"
+    $response = Invoke-WebRequest -Method Get -Uri $FileUrl -Headers $Headers
+    $FileContent = $response.Content
+    Write-Output "Dataverse File retrieved successfully"
+} catch {
+    Write-Output "Failed to retrieve Dataverse file"
+}
+
+try {
+    $Stream = [IO.MemoryStream]::new([byte[]]$FileContent)
+    $FileUpload = Add-PnPFile -FileName $FileName -Folder $SharePointDocLibName -Stream $Stream
+    Write-Output "Dataverse file successfully uploaded to SharePoint"
+} catch {
+    Write-Output "Failed to upload Dataverse file to SharePoint"
+}
+
+Disconnect-PnPOnline
+Write-Output "Script completed"
