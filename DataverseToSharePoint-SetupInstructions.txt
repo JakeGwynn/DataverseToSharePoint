@@ -27,12 +27,18 @@ POST https://graph.microsoft.com/v1.0/sites/{SITE_ID}/permissions
 }
 
 # 9.   [Global/Azure Admin] Create an Azure Automation account.
-# 10.  [Global/Azure Admin] Assign the development team "Owner", "Contributor" role to the Azure Automation account (or similar role to give permission to create, edit, and run runbooks and credentials).
+# 9a.  [Global/Azure Admin] Assign the development team "Owner", "Contributor" role to the Azure Automation account (or similar role to give permission to create, edit, and run runbooks and credentials).
 
+## IF USING RUN ENVIRONMENT EXPERIENCE:
 # 10.  [Dev Team] Create custom runtime environment in Azure Automation for PnP PowerShell. Use PowerShell version 7.4
 # 10a. [Dev Team] Upload the pnp.powershell.zip module file to the custom runtime environment created in step 10 using the "Add a file" option in the Azure portal.
-# 11.  [Dev Team] Create Runbook using the script that Jake has provided. 
+# 11.  [Dev Team] Create Runbook using the script that Jake has provided. (DataverseToSharePoint.txt)
 # 12.  [Dev Team] Assign the Runbook to the custom runtime environment created in step 10.
+
+## IF USING MODULE EXPERIENCE:
+# 10.  [Dev Team] Open the "Modules" section of the Azure Automation account, add a new module, and upload the pnp.powershell.zip module file. Select PowerShell Runtime version 7.2.  https://learn.microsoft.com/en-us/azure/automation/shared-resources/modules#import-modules
+# 11.  [Dev Team] Create Runbook using the script that Jake has provided (DataverseToSharePoint.txt)
+
 # 13.  [Dev Team] Upload the self-signed certificate .pfx file into Azure Automation account.
 # 14.  [Dev Team] Create a set of credentials in Azure Automation using the Client ID and Client Secret from the app registration created in step 2. Name the credential "AppRegistration".
 # 15.  [Dev Team] Update the Runbook with the correct parameters for your environment, including: DataverseTableName, DataverseFileColumnName, DataverseUrl, SharePointSiteUrl, SharePointDocLibName, TenantId, and CertificateThumbprint.
