@@ -6,13 +6,13 @@ param (
     [string]$FileName = "FileName.pdf",
 
     [Parameter(Mandatory = $false)]
-    [string]$DataverseTableName = "cr85b_jakecustomtables",
+    [string]$DataverseTableName = "annotations",
 
     [Parameter(Mandatory = $false)]
-    [string]$DataverseFileColumnName = "cr85b_filecolumn1",
+    [string]$DataverseFileColumnName = "documentbody",
 
     [Parameter(Mandatory = $false)]
-    [string]$DataverseUrl = "https://org660f944a.crm.dynamics.com/",
+    [string]$DataverseUrl = "https://orgb9d46ed6.crm.dynamics.com/",
 
     [Parameter(Mandatory = $false)]
     [string]$SharePointSiteUrl = "https://jakegwynndemo.sharepoint.com/sites/AllowList-Automation",
@@ -24,27 +24,16 @@ param (
     [string]$TenantId = "04b9e073-f7cf-4c95-9f91-e6d55d5a3797",
 
     [Parameter(Mandatory = $false)]
-    [string]$CertificateThumbprint = "A507B2A63E3C0D962667678578C8F1B573B03288"
+    [string]$CertificateThumbprint = "CCBE000B80BE1112C553F635C20DC3C8D9412528"
 )
 
-# Provide details about parameters that were passed to the script
-Write-Output "Dataverse Table Name:               $DataverseTableName"
-Write-Output "Dataverse File Column Name:         $DataverseFileColumnName"
-Write-Output "Dataverse Row ID:                   $DataverseRowId"
-Write-Output "Dataverse URL:                      $DataverseUrl"
-Write-Output "SharePoint Site URL:                $SharePointSiteUrl"
-Write-Output "SharePoint Document Library Name:   $SharePointDocLibName"
-Write-Output "File Name:                          $FileName"
-Write-Output "Tenant ID:                          $TenantId"
-
-Write-Host "`r`n"
-Write-Host "Importing PnP.PowerShell module..."
-Import-Module "pnp.powershell"
-
-# Retrieve Azure Automation Crednetials named "AppRegistration"
 $AppRegistrationCredentials = Get-AutomationPSCredential -Name "AppRegistration"
 if (-not $AppRegistrationCredentials) {
-    Write-Output "Failed to retrieve credentials. Ensure the credential 'AppRegistration' exists in Azure Automation."
+    $result = @{
+        success = $false
+        error = "Failed to retrieve credentials. Ensure the credential 'AppRegistration' exists in Azure Automation."
+    }
+    Write-Output ($result | ConvertTo-Json -Compress)
     exit
 }
 
@@ -62,19 +51,28 @@ $Body = @{
 }
 
 try {
-    Write-Output "Retrieving access token for Dataverse..."
+    Write-Verbose "Retrieving access token for Dataverse..." -Verbose
     $TokenResponse = Invoke-RestMethod -Method Post -Uri $TokenUrl -Body $Body -ContentType "application/x-www-form-urlencoded"
     $AccessToken = $TokenResponse.access_token
 } catch {
-    Write-Output "Failed to retrieve access token for Dataverse"
+    $result = @{
+        success = $false
+        error = "Failed to retrieve access token for Dataverse: $($_.Exception.Message)"
+    }
+    Write-Output ($result | ConvertTo-Json -Compress)
     exit
 }
 
+# Connect to SharePoint using PnP PowerShell
 try {
-    Write-Output "Connecting to SharePoint using Connect-PnPOnline ..."
+    Write-Verbose "Connecting to SharePoint using Connect-PnPOnline ..." -Verbose
     Connect-PnPOnline -Url $SharePointSiteUrl -ClientId $ClientId -Thumbprint $CertificateThumbprint -Tenant $TenantId  -ErrorAction Stop
 } catch {
-    Write-Output "Failed to connect to SharePoint Online using Connect-PnPOnline"
+    $result = @{
+        success = $false
+        error = "Failed to connect to SharePoint Online: $($_.Exception.Message)"
+    }
+    Write-Output ($result | ConvertTo-Json -Compress)
     exit
 }
 
@@ -82,24 +80,51 @@ $Headers = @{
     Authorization = "Bearer $AccessToken"
 }
 
-$FileUrl = "$DataverseUrl/api/data/v9.2/$DataverseTableName($DataverseRowId)/$DataverseFileColumnName/`$value"
+if($DataverseTableName -eq "annotations"){
+    $FileUrl = "$DataverseUrl/api/data/v9.2/$DataverseTableName($DataverseRowId)?`$select=$DataverseFileColumnName"
+} else {
+    $FileUrl = "$DataverseUrl/api/data/v9.2/$DataverseTableName($DataverseRowId)/$DataverseFileColumnName/`$value"
+}
 
 try {
-    Write-Output "Retrieving Dataverse file"
+    Write-Verbose "Retrieving Dataverse file" -Verbose
     $response = Invoke-WebRequest -Method Get -Uri $FileUrl -Headers $Headers
-    $FileContent = $response.Content
-    Write-Output "Dataverse File retrieved successfully"
+
+    if($DataverseTableName -eq "annotations") {
+        $FileContent = [System.Convert]::FromBase64String(($response.Content | ConvertFrom-Json).documentbody)
+    } else {
+        $FileContent = $response.Content 
+    }
+
+    Write-Verbose "Dataverse File retrieved successfully" -Verbose
 } catch {
-    Write-Output "Failed to retrieve Dataverse file"
+    $result = @{
+        success = $false
+        error = "Failed to retrieve Dataverse file: $($_.Exception.Message)"
+    }
+    Write-Output ($result | ConvertTo-Json -Compress)
+    exit
 }
 
 try {
     $Stream = [IO.MemoryStream]::new([byte[]]$FileContent)
     $FileUpload = Add-PnPFile -FileName $FileName -Folder $SharePointDocLibName -Stream $Stream
-    Write-Output "Dataverse file successfully uploaded to SharePoint"
+    Write-Verbose "Dataverse file successfully uploaded to SharePoint" -Verbose
 } catch {
-    Write-Output "Failed to upload Dataverse file to SharePoint"
+    $result = @{
+        success = $false
+        error = "Failed to upload Dataverse file to SharePoint: $($_.Exception.Message)"
+    }
+    Write-Output ($result | ConvertTo-Json -Compress)
+    exit
 }
 
 Disconnect-PnPOnline
-Write-Output "Script completed"
+Write-Verbose "Script completed successfully" -Verbose
+
+# Return success result as JSON
+$result = @{
+    success = $true
+    error = ""
+}
+Write-Output ($result | ConvertTo-Json -Compress)
