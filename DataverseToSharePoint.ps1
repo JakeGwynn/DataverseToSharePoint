@@ -80,43 +80,83 @@ $Headers = @{
     Authorization = "Bearer $AccessToken"
 }
 
-if($DataverseTableName -eq "annotations"){
-    $FileUrl = "$DataverseUrl/api/data/v9.2/$DataverseTableName($DataverseRowId)?`$select=$DataverseFileColumnName"
-} else {
-    $FileUrl = "$DataverseUrl/api/data/v9.2/$DataverseTableName($DataverseRowId)/$DataverseFileColumnName/`$value"
-}
+$TempFilePath = Join-Path $env:TEMP $FileName
 
 try {
-    Write-Output "Retrieving Dataverse file" 
-    $response = Invoke-WebRequest -Method Get -Uri $FileUrl -Headers $Headers
+    Write-Output "Retrieving Dataverse file..."
 
-    if($DataverseTableName -eq "annotations") {
-        $FileContent = [System.Convert]::FromBase64String(($response.Content | ConvertFrom-Json).documentbody)
-    } else {
-        $FileContent = $response.Content 
+    if ($DataverseTableName -eq "annotations") {
+        # Annotations store files as a single Base64 string (cannot be chunked via API)
+        $FileUrl = "$DataverseUrl/api/data/v9.2/$DataverseTableName($DataverseRowId)?`$select=$DataverseFileColumnName"
+        $response = Invoke-RestMethod -Method Get -Uri $FileUrl -Headers $Headers
+        
+        $FileBytes = [System.Convert]::FromBase64String($response.documentbody)
+        [System.IO.File]::WriteAllBytes($TempFilePath, $FileBytes)
+        
+        # Free up memory immediately
+        $response = $null
+        $FileBytes = $null
+        [GC]::Collect()
+    } 
+    else {
+        # Modern File/Image Columns support chunked downloading
+        $InitUrl = "$DataverseUrl/api/data/v9.2/$DataverseTableName($DataverseRowId)/$DataverseFileColumnName/Microsoft.Dynamics.CRM.InitializeFileBlocksDownload"
+        $InitResponse = Invoke-RestMethod -Method Get -Uri $InitUrl -Headers $Headers
+        
+        $FileSize = $InitResponse.FileSizeInBytes
+        $Token = [uri]::EscapeDataString($InitResponse.FileContinuationToken)
+        $BlockSize = 4194304 # 4 MB chunks
+        $Offset = 0
+        
+        # Create an empty file and open a file stream
+        New-Item -Path $TempFilePath -ItemType File -Force | Out-Null
+        $FileStream = [System.IO.File]::OpenWrite($TempFilePath)
+        
+        try {
+            while ($Offset -lt $FileSize) {
+                $DownloadUrl = "$DataverseUrl/api/data/v9.2/DownloadBlock(FileContinuationToken='$Token',Offset=$Offset,BlockLength=$BlockSize)"
+                
+                # Retrieve the block and write directly to the file stream
+                $BlockResponse = Invoke-WebRequest -Method Get -Uri $DownloadUrl -Headers $Headers
+                $BlockBytes = $BlockResponse.Content
+                $FileStream.Write($BlockBytes, 0, $BlockBytes.Length)
+                
+                $Offset += $BlockSize
+            }
+        } finally {
+            $FileStream.Close() # Always ensure the stream is closed so SharePoint can lock it
+        }
     }
-
-    Write-Output "Dataverse File retrieved successfully" 
-} catch {
-    $result = @{
-        success = $false
-        error = "Failed to retrieve Dataverse file: $($_.Exception.Message)"
-    }
+    
+    Write-Output "Dataverse File retrieved and temporarily saved to disk successfully"
+} 
+catch {
+    $result = @{ success = $false; error = "Failed to retrieve Dataverse file: $($_.Exception.Message)" }
     Write-Output ($result | ConvertTo-Json -Compress)
     exit
 }
 
+# ---------------------------------------------------------
+# Upload to SharePoint
+# ---------------------------------------------------------
 try {
-    $Stream = [IO.MemoryStream]::new([byte[]]$FileContent)
-    $FileUpload = Add-PnPFile -FileName $FileName -Folder $SharePointDocLibName -Stream $Stream
-    Write-Output "Dataverse file successfully uploaded to SharePoint" 
-} catch {
-    $result = @{
-        success = $false
-        error = "Failed to upload Dataverse file to SharePoint: $($_.Exception.Message)"
-    }
+    Write-Output "Uploading file from temp disk to SharePoint..."
+    
+    # Add-PnPFile reads directly from the disk path, bypassing MemoryStream
+    $FileUpload = Add-PnPFile -Path $TempFilePath -Folder $SharePointDocLibName
+    
+    Write-Output "Dataverse file successfully uploaded to SharePoint"
+} 
+catch {
+    $result = @{ success = $false; error = "Failed to upload Dataverse file to SharePoint: $($_.Exception.Message)" }
     Write-Output ($result | ConvertTo-Json -Compress)
     exit
+} 
+finally {
+    # Clean up the sandbox environment
+    if (Test-Path $TempFilePath) {
+        Remove-Item $TempFilePath -Force
+    }
 }
 
 Disconnect-PnPOnline
@@ -128,4 +168,5 @@ $result = @{
     error = ""
 }
 Write-Output ($result | ConvertTo-Json -Compress)
+
 
