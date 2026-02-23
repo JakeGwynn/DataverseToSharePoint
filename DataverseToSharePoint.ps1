@@ -51,7 +51,7 @@ $Body = @{
 }
 
 try {
-    Write-Verbose "Retrieving access token for Dataverse..." -Verbose
+    Write-Output "Retrieving access token for Dataverse..." 
     $TokenResponse = Invoke-RestMethod -Method Post -Uri $TokenUrl -Body $Body -ContentType "application/x-www-form-urlencoded"
     $AccessToken = $TokenResponse.access_token
 } catch {
@@ -65,7 +65,7 @@ try {
 
 # Connect to SharePoint using PnP PowerShell
 try {
-    Write-Verbose "Connecting to SharePoint using Connect-PnPOnline ..." -Verbose
+    Write-Output "Connecting to SharePoint using Connect-PnPOnline ..." 
     Connect-PnPOnline -Url $SharePointSiteUrl -ClientId $ClientId -Thumbprint $CertificateThumbprint -Tenant $TenantId  -ErrorAction Stop
 } catch {
     $result = @{
@@ -87,7 +87,7 @@ if($DataverseTableName -eq "annotations"){
 }
 
 try {
-    Write-Verbose "Retrieving Dataverse file" -Verbose
+    Write-Output "Retrieving Dataverse file" 
     $response = Invoke-WebRequest -Method Get -Uri $FileUrl -Headers $Headers
 
     if($DataverseTableName -eq "annotations") {
@@ -96,7 +96,7 @@ try {
         $FileContent = $response.Content 
     }
 
-    Write-Verbose "Dataverse File retrieved successfully" -Verbose
+    Write-Output "Dataverse File retrieved successfully" 
 } catch {
     $result = @{
         success = $false
@@ -109,7 +109,7 @@ try {
 try {
     $Stream = [IO.MemoryStream]::new([byte[]]$FileContent)
     $FileUpload = Add-PnPFile -FileName $FileName -Folder $SharePointDocLibName -Stream $Stream
-    Write-Verbose "Dataverse file successfully uploaded to SharePoint" -Verbose
+    Write-Output "Dataverse file successfully uploaded to SharePoint" 
 } catch {
     $result = @{
         success = $false
@@ -120,7 +120,7 @@ try {
 }
 
 Disconnect-PnPOnline
-Write-Verbose "Script completed successfully" -Verbose
+Write-Output "Script completed successfully" 
 
 # Return success result as JSON
 $result = @{
@@ -128,3 +128,4 @@ $result = @{
     error = ""
 }
 Write-Output ($result | ConvertTo-Json -Compress)
+
