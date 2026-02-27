@@ -27,7 +27,17 @@ param (
     [string]$CertificateThumbprint = "CCBE000B80BE1112C553F635C20DC3C8D9412528"
 )
 
-$AppRegistrationCredentials = Get-AutomationPSCredential -Name "AppRegistration"
+# Provide details about parameters that were passed to the script
+Write-Output "Dataverse Table Name:               $DataverseTableName"
+Write-Output "Dataverse File Column Name:         $DataverseFileColumnName"
+Write-Output "Dataverse Row ID:                   $DataverseRowId"
+Write-Output "Dataverse URL:                      $DataverseUrl"
+Write-Output "SharePoint Site URL:                $SharePointSiteUrl"
+Write-Output "SharePoint Document Library Name:   $SharePointDocLibName"
+Write-Output "File Name:                          $FileName"
+Write-Output "Tenant ID:                          $TenantId"
+
+$AppRegistrationCredentials = Get-AutomationPSCredential -Name "AppRegistration-Dev"
 if (-not $AppRegistrationCredentials) {
     $result = @{
         success = $false
@@ -82,50 +92,67 @@ $Headers = @{
 
 $TempFilePath = Join-Path $env:TEMP $FileName
 
+# Safely trim any trailing slash from the base URL to prevent "//api" malformed URLs
+$CleanDataverseUrl = $DataverseUrl.TrimEnd('/')
+
 try {
-    Write-Output "Retrieving Dataverse file..."
+    Write-Output "Initializing Dataverse file download..."
 
     if ($DataverseTableName -eq "annotations") {
-        # Annotations store files as a single Base64 string (cannot be chunked via API)
-        $FileUrl = "$DataverseUrl/api/data/v9.2/$DataverseTableName($DataverseRowId)?`$select=$DataverseFileColumnName"
-        $response = Invoke-RestMethod -Method Get -Uri $FileUrl -Headers $Headers
+        # Annotations require a POST action to initialize chunking
+        $InitUrl = "$CleanDataverseUrl/api/data/v9.2/InitializeAnnotationBlocksDownload"
+        $InitBody = @{
+            Target = @{
+                "@odata.type" = "Microsoft.Dynamics.CRM.annotation"
+                annotationid = $DataverseRowId
+            }
+        } | ConvertTo-Json -Depth 2
         
-        $FileBytes = [System.Convert]::FromBase64String($response.documentbody)
-        [System.IO.File]::WriteAllBytes($TempFilePath, $FileBytes)
-        
-        # Free up memory immediately
-        $response = $null
-        $FileBytes = $null
-        [GC]::Collect()
+        $InitResponse = Invoke-RestMethod -Method Post -Uri $InitUrl -Headers $Headers -Body $InitBody -ContentType "application/json"
     } 
     else {
-        # Modern File/Image Columns support chunked downloading
-        $InitUrl = "$DataverseUrl/api/data/v9.2/$DataverseTableName($DataverseRowId)/$DataverseFileColumnName/Microsoft.Dynamics.CRM.InitializeFileBlocksDownload"
+        # Modern File/Image Columns use a GET function bound to the column
+        $InitUrl = "$CleanDataverseUrl/api/data/v9.2/$DataverseTableName($DataverseRowId)/$DataverseFileColumnName/Microsoft.Dynamics.CRM.InitializeFileBlocksDownload"
         $InitResponse = Invoke-RestMethod -Method Get -Uri $InitUrl -Headers $Headers
-        
-        $FileSize = $InitResponse.FileSizeInBytes
-        $Token = [uri]::EscapeDataString($InitResponse.FileContinuationToken)
-        $BlockSize = 4194304 # 4 MB chunks
-        $Offset = 0
-        
-        # Create an empty file and open a file stream
-        New-Item -Path $TempFilePath -ItemType File -Force | Out-Null
-        $FileStream = [System.IO.File]::OpenWrite($TempFilePath)
-        
-        try {
-            while ($Offset -lt $FileSize) {
-                $DownloadUrl = "$DataverseUrl/api/data/v9.2/DownloadBlock(FileContinuationToken='$Token',Offset=$Offset,BlockLength=$BlockSize)"
-                
-                # Retrieve the block and write directly to the file stream
-                $BlockResponse = Invoke-WebRequest -Method Get -Uri $DownloadUrl -Headers $Headers
-                $BlockBytes = $BlockResponse.Content
-                $FileStream.Write($BlockBytes, 0, $BlockBytes.Length)
-                
-                $Offset += $BlockSize
-            }
-        } finally {
-            $FileStream.Close() # Always ensure the stream is closed so SharePoint can lock it
+    }
+    
+    $FileSize = $InitResponse.FileSizeInBytes
+    # Do NOT URL-encode the token, as it is now being passed safely inside a JSON body
+    $Token = $InitResponse.FileContinuationToken 
+    $BlockSize = 4194304 # 4 MB chunks
+    $Offset = 0
+    
+    Write-Output "Downloading $FileName ($FileSize bytes) in 4MB chunks..."
+    
+    # Create an empty file and open a file stream to write directly to the Temp Disk
+    New-Item -Path $TempFilePath -ItemType File -Force | Out-Null
+    $FileStream = [System.IO.File]::OpenWrite($TempFilePath)
+    
+    try {
+        while ($Offset -lt $FileSize) {
+            # DownloadBlock is an Action, so it requires a POST request
+            $DownloadUrl = "$CleanDataverseUrl/api/data/v9.2/DownloadBlock"
+            
+            $DownloadBody = @{
+                FileContinuationToken = $Token
+                Offset = $Offset
+                BlockLength = $BlockSize
+            } | ConvertTo-Json -Compress
+
+            # Make the POST request
+            $BlockResponse = Invoke-RestMethod -Method Post -Uri $DownloadUrl -Headers $Headers -Body $DownloadBody -ContentType "application/json"
+            
+            # The Web API returns 'Data' as a Base64-encoded string. Convert it back to bytes.
+            $BlockBytes = [System.Convert]::FromBase64String($BlockResponse.Data)
+            
+            # Write the bytes to the disk stream
+            $FileStream.Write($BlockBytes, 0, $BlockBytes.Length)
+            
+            $Offset += $BlockSize
         }
+    } finally {
+        # Always ensure the stream is closed so SharePoint can safely lock and upload it
+        $FileStream.Close() 
     }
     
     Write-Output "Dataverse File retrieved and temporarily saved to disk successfully"
@@ -142,7 +169,7 @@ catch {
 try {
     Write-Output "Uploading file from temp disk to SharePoint..."
     
-    # Add-PnPFile reads directly from the disk path, bypassing MemoryStream
+    # Add-PnPFile reads directly from the disk path
     $FileUpload = Add-PnPFile -Path $TempFilePath -Folder $SharePointDocLibName
     
     Write-Output "Dataverse file successfully uploaded to SharePoint"
@@ -168,5 +195,3 @@ $result = @{
     error = ""
 }
 Write-Output ($result | ConvertTo-Json -Compress)
-
-
