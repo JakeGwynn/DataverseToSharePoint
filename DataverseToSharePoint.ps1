@@ -24,20 +24,25 @@ param (
     [string]$TenantId = "04b9e073-f7cf-4c95-9f91-e6d55d5a3797",
 
     [Parameter(Mandatory = $false)]
-    [string]$CertificateThumbprint = "CCBE000B80BE1112C553F635C20DC3C8D9412528"
+    [string]$CertificateThumbprint = "F006BD99AF38A2491C70F0ACDEF480B15A41C03C",
+
+    [Parameter(Mandatory = $false)]
+    [bool]$DebugOutput = $false
 )
 
 # Provide details about parameters that were passed to the script
-Write-Output "Dataverse Table Name:               $DataverseTableName"
-Write-Output "Dataverse File Column Name:         $DataverseFileColumnName"
-Write-Output "Dataverse Row ID:                   $DataverseRowId"
-Write-Output "Dataverse URL:                      $DataverseUrl"
-Write-Output "SharePoint Site URL:                $SharePointSiteUrl"
-Write-Output "SharePoint Document Library Name:   $SharePointDocLibName"
-Write-Output "File Name:                          $FileName"
-Write-Output "Tenant ID:                          $TenantId"
+if ($DebugOutput) {
+    Write-Output "Dataverse Table Name:               $DataverseTableName"
+    Write-Output "Dataverse File Column Name:         $DataverseFileColumnName"
+    Write-Output "Dataverse Row ID:                   $DataverseRowId"
+    Write-Output "Dataverse URL:                      $DataverseUrl"
+    Write-Output "SharePoint Site URL:                $SharePointSiteUrl"
+    Write-Output "SharePoint Document Library Name:   $SharePointDocLibName"
+    Write-Output "File Name:                          $FileName"
+    Write-Output "Tenant ID:                          $TenantId"
+}
 
-$AppRegistrationCredentials = Get-AutomationPSCredential -Name "AppRegistration-Dev"
+$AppRegistrationCredentials = Get-AutomationPSCredential -Name "AppRegistration"
 if (-not $AppRegistrationCredentials) {
     $result = @{
         success = $false
@@ -61,7 +66,7 @@ $Body = @{
 }
 
 try {
-    Write-Output "Retrieving access token for Dataverse..." 
+    if ($DebugOutput) { Write-Output "Retrieving access token for Dataverse..." }
     $TokenResponse = Invoke-RestMethod -Method Post -Uri $TokenUrl -Body $Body -ContentType "application/x-www-form-urlencoded"
     $AccessToken = $TokenResponse.access_token
 } catch {
@@ -75,7 +80,7 @@ try {
 
 # Connect to SharePoint using PnP PowerShell
 try {
-    Write-Output "Connecting to SharePoint using Connect-PnPOnline ..." 
+    if ($DebugOutput) { Write-Output "Connecting to SharePoint using Connect-PnPOnline ..." }
     Connect-PnPOnline -Url $SharePointSiteUrl -ClientId $ClientId -Thumbprint $CertificateThumbprint -Tenant $TenantId  -ErrorAction Stop
 } catch {
     $result = @{
@@ -96,7 +101,7 @@ $TempFilePath = Join-Path $env:TEMP $FileName
 $CleanDataverseUrl = $DataverseUrl.TrimEnd('/')
 
 try {
-    Write-Output "Initializing Dataverse file download..."
+    if ($DebugOutput) { Write-Output "Initializing Dataverse file download..." }
 
     if ($DataverseTableName -eq "annotations") {
         # Annotations require a POST action to initialize chunking
@@ -122,7 +127,7 @@ try {
     $BlockSize = 4194304 # 4 MB chunks
     $Offset = 0
     
-    Write-Output "Downloading $FileName ($FileSize bytes) in 4MB chunks..."
+    if ($DebugOutput) { Write-Output "Downloading $FileName ($FileSize bytes) in 4MB chunks..." }
     
     # Create an empty file and open a file stream to write directly to the Temp Disk
     New-Item -Path $TempFilePath -ItemType File -Force | Out-Null
@@ -155,7 +160,7 @@ try {
         $FileStream.Close() 
     }
     
-    Write-Output "Dataverse File retrieved and temporarily saved to disk successfully"
+    if ($DebugOutput) { Write-Output "Dataverse File retrieved and temporarily saved to disk successfully" }
 } 
 catch {
     $result = @{ success = $false; error = "Failed to retrieve Dataverse file: $($_.Exception.Message)" }
@@ -167,12 +172,12 @@ catch {
 # Upload to SharePoint
 # ---------------------------------------------------------
 try {
-    Write-Output "Uploading file from temp disk to SharePoint..."
+    if ($DebugOutput) { Write-Output "Uploading file from temp disk to SharePoint..." }
     
     # Add-PnPFile reads directly from the disk path
     $FileUpload = Add-PnPFile -Path $TempFilePath -Folder $SharePointDocLibName
     
-    Write-Output "Dataverse file successfully uploaded to SharePoint"
+    if ($DebugOutput) { Write-Output "Dataverse file successfully uploaded to SharePoint" }
 } 
 catch {
     $result = @{ success = $false; error = "Failed to upload Dataverse file to SharePoint: $($_.Exception.Message)" }
@@ -187,7 +192,7 @@ finally {
 }
 
 Disconnect-PnPOnline
-Write-Output "Script completed successfully" 
+if ($DebugOutput) { Write-Output "Script completed successfully" }
 
 # Return success result as JSON
 $result = @{
